@@ -120,6 +120,8 @@ void* handle_client(void* arg) {
                 clients[current_index].is_logged_in = 1;
                 pthread_mutex_unlock(&clients_mutex);
                 
+                printf("[LOG] Kullanici giris yapti: %s\n", user);
+                
                 char success_msg[] = "Giris Basarili! Mesajlasmaya baslayabilirsiniz.\nKullanim: @kullanici_adi mesajiniz VEYA direkt mesajiniz (Ortak alan)\n";
                 send(sock, success_msg, strlen(success_msg), 0);
                 
@@ -132,6 +134,7 @@ void* handle_client(void* arg) {
             }
         } else if (option == 2) { // Kayıt
             if (register_user(user, pass)) {
+                printf("[LOG] Yeni kayit: %s\n", user);
                 char reg_msg[] = "Kayit Basarili! Lutfen yeniden giris yapiniz.\nSecim (1/2): ";
                 send(sock, reg_msg, strlen(reg_msg), 0);
             } else {
@@ -149,6 +152,7 @@ void* handle_client(void* arg) {
         memset(buffer, 0, sizeof(buffer));
         bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_read <= 0) {
+            printf("[LOG] Kullanici ayrildi: %s\n", clients[current_index].username);
             char leave_msg[128];
             snprintf(leave_msg, sizeof(leave_msg), "%s sohbetten ayrildi.", clients[current_index].username);
             broadcast_message("Sistem", leave_msg);
@@ -168,10 +172,12 @@ void* handle_client(void* arg) {
             recipient[j] = '\0';
 
             if (buffer[i] == ' ') {
+                printf("[LOG] [Ozel] %s -> %s: %s\n", clients[current_index].username, recipient, &buffer[i + 1]);
                 send_private_message(clients[current_index].username, recipient, &buffer[i + 1]);
             }
         } else {
             // Herkese mesaj
+            printf("[LOG] [Herkes] %s: %s\n", clients[current_index].username, buffer);
             broadcast_message(clients[current_index].username, buffer);
         }
     }

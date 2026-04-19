@@ -55,6 +55,7 @@ int main() {
             printf("Bağlantı kabul edilemedi.\n");
             continue;
         }
+        printf("[LOG] Yeni bir baglanti kuruldu.\n");
 
         // Boş istemci slotu bul
         int slot_found = -1;
