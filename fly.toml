@@ -1,0 +1,18 @@
+app = "cemalhocaproje-server-12345" # Bu isim deploy sirasinda otomatik degisebilir
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 8080 # Bu sekilde Android'den dogrudan app_ismi.fly.dev:8080 ile baglanilabilir
+    handlers = [] # HTTP handler yok, saf TCP
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80

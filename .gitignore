@@ -1,0 +1,36 @@
+# Compiled Object files
+*.o
+*.obj
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Executables (Windows & Linux)
+*.exe
+server/server
+server/server.exe
+client/client
+client/client.exe
+
+# Database/Storage files
+users.txt
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Android-specific (for local testing/setup)
+.gradle/
+build/
+*.apk
+*.ap_
+*.dex
+captures/
