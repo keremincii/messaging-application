@@ -155,6 +155,11 @@ void* handle_client(void* arg) {
         buffer[strcspn(buffer, "\r\n")] = 0;
         if (strlen(buffer) == 0) continue;
 
+        /* Keepalive PING - sessizce yoksay */
+        if (strcmp(buffer, "PING") == 0) {
+            continue;
+        }
+
         /* Format: TO:alici:mesaj */
         if (strncmp(buffer, "TO:", 3) == 0) {
             char* recipient_start = buffer + 3;

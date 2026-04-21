@@ -23,12 +23,16 @@ import android.widget.ViewFlipper;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +40,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String DEFAULT_HOST = "0.tcp.eu.ngrok.io";
     private static final int    DEFAULT_PORT = 18294;
+    private static final String TAG = "ChatApp";
 
     // Avatar renkleri
     private static final int[] AVATAR_COLORS = {
@@ -68,15 +73,25 @@ public class MainActivity extends AppCompatActivity {
     private Socket         socket;
     private PrintWriter    out;
     private BufferedReader in;
-    private boolean isConnected = false;
+    private volatile boolean isConnected = false;
+
+    // Otomatik yeniden baglanti
+    private boolean shouldReconnect = true;
+    private int reconnectDelay = 3000; // 3 saniye
+    private static final int MAX_RECONNECT_DELAY = 30000; // 30 saniye max
+    private Handler reconnectHandler = new Handler(Looper.getMainLooper());
+    private Runnable reconnectRunnable;
+
+    // Keepalive (baglanti kopmamasi icin)
+    private Handler keepaliveHandler = new Handler(Looper.getMainLooper());
+    private static final int KEEPALIVE_INTERVAL = 25000; // 25 saniye
 
     // Kullanici bilgileri
     private String username = "Kullanici";
-    private String currentChatUser = null; // Suanda kiminle konusuyoruz
+    private String currentChatUser = null;
 
-    // Kisi listesi ve online durumu
+    // Kisi listesi ve mesaj gecmisi
     private List<String> onlineUsers = new ArrayList<>();
-    // Her kullanici icin mesaj gecmisi: username -> list of messages
     private Map<String, List<ChatMessage>> chatHistory = new HashMap<>();
 
     private SharedPreferences prefs;
@@ -86,9 +101,16 @@ public class MainActivity extends AppCompatActivity {
     static class ChatMessage {
         String text;
         boolean isSent;
+        long timestamp;
         ChatMessage(String text, boolean isSent) {
             this.text = text;
             this.isSent = isSent;
+            this.timestamp = System.currentTimeMillis();
+        }
+        ChatMessage(String text, boolean isSent, long timestamp) {
+            this.text = text;
+            this.isSent = isSent;
+            this.timestamp = timestamp;
         }
     }
 
@@ -116,6 +138,9 @@ public class MainActivity extends AppCompatActivity {
         tvChatName      = findViewById(R.id.tvChatName);
         tvChatStatus    = findViewById(R.id.tvChatStatus);
         tvChatAvatar    = findViewById(R.id.tvChatAvatar);
+
+        // Mesaj gecmisini yukle
+        loadChatHistoryFromStorage();
 
         // Ayarlar butonu
         btnSettings.setOnClickListener(v -> showSettingsDialog());
@@ -148,7 +173,60 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Ekran Gecisleri ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // MESAJ GECMISI KAYDETME / YUKLEME (SharedPreferences + JSON)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private void saveChatHistoryToStorage() {
+        try {
+            JSONObject root = new JSONObject();
+            for (Map.Entry<String, List<ChatMessage>> entry : chatHistory.entrySet()) {
+                JSONArray arr = new JSONArray();
+                for (ChatMessage msg : entry.getValue()) {
+                    JSONObject m = new JSONObject();
+                    m.put("text", msg.text);
+                    m.put("sent", msg.isSent);
+                    m.put("time", msg.timestamp);
+                    arr.put(m);
+                }
+                root.put(entry.getKey(), arr);
+            }
+            prefs.edit().putString("chat_history", root.toString()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "Mesaj gecmisi kaydedilemedi", e);
+        }
+    }
+
+    private void loadChatHistoryFromStorage() {
+        try {
+            String json = prefs.getString("chat_history", "");
+            if (json.isEmpty()) return;
+
+            JSONObject root = new JSONObject(json);
+            Iterator<String> keys = root.keys();
+            while (keys.hasNext()) {
+                String contact = keys.next();
+                JSONArray arr = root.getJSONArray(contact);
+                List<ChatMessage> messages = new ArrayList<>();
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject m = arr.getJSONObject(i);
+                    messages.add(new ChatMessage(
+                        m.getString("text"),
+                        m.getBoolean("sent"),
+                        m.optLong("time", 0)
+                    ));
+                }
+                chatHistory.put(contact, messages);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Mesaj gecmisi yuklenemedi", e);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EKRAN GECISLERI
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void showContactsList() {
         currentChatUser = null;
         viewFlipper.setDisplayedChild(0);
@@ -159,24 +237,32 @@ public class MainActivity extends AppCompatActivity {
         currentChatUser = contactName;
         viewFlipper.setDisplayedChild(1);
 
-        // Header bilgilerini ayarla
         tvChatName.setText(contactName);
         boolean isOnline = onlineUsers.contains(contactName);
         tvChatStatus.setText(isOnline ? "Online" : "Offline");
-        tvChatStatus.setTextColor(isOnline ? Color.parseColor("#A5D6A7") : Color.parseColor("#EF9A9A"));
+        tvChatStatus.setTextColor(isOnline ?
+            Color.parseColor("#A5D6A7") : Color.parseColor("#EF9A9A"));
 
-        // Avatar
         setupAvatar(tvChatAvatar, contactName);
-
-        // Mesaj gecmisini yukle
         loadChatMessages(contactName);
     }
 
-    // ─── Kisi Listesi UI ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // KISI LISTESI UI
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void refreshContactsUI() {
         contactsList.removeAllViews();
 
-        if (onlineUsers.isEmpty()) {
+        // Oncelik: online kullanicilar + gecmisi olan offline kullanicilar
+        List<String> allContacts = new ArrayList<>(onlineUsers);
+        for (String contact : chatHistory.keySet()) {
+            if (!allContacts.contains(contact)) {
+                allContacts.add(contact);
+            }
+        }
+
+        if (allContacts.isEmpty()) {
             TextView empty = new TextView(this);
             empty.setText("Henuz kimse online degil.\nBaska bir cihazdan baglanmayi dene!");
             empty.setTextSize(14);
@@ -187,8 +273,9 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        for (String user : onlineUsers) {
-            addContactItem(user, true);
+        for (String user : allContacts) {
+            boolean isOnline = onlineUsers.contains(user);
+            addContactItem(user, isOnline);
         }
     }
 
@@ -204,7 +291,7 @@ public class MainActivity extends AppCompatActivity {
         itemParams.setMargins(0, 0, 0, dpToPx(1));
         item.setLayoutParams(itemParams);
 
-        // Avatar (renkli daire + bas harf)
+        // Avatar
         TextView avatar = new TextView(this);
         avatar.setWidth(dpToPx(48));
         avatar.setHeight(dpToPx(48));
@@ -215,7 +302,7 @@ public class MainActivity extends AppCompatActivity {
         setupAvatar(avatar, name);
         item.addView(avatar);
 
-        // Ad ve durum
+        // Ad, durum ve son mesaj
         LinearLayout textCol = new LinearLayout(this);
         textCol.setOrientation(LinearLayout.VERTICAL);
         textCol.setPadding(dpToPx(14), 0, 0, 0);
@@ -230,11 +317,23 @@ public class MainActivity extends AppCompatActivity {
         nameView.setTypeface(null, Typeface.BOLD);
         textCol.addView(nameView);
 
-        TextView statusView = new TextView(this);
-        statusView.setText(isOnline ? "Online" : "Offline");
-        statusView.setTextSize(12);
-        statusView.setTextColor(isOnline ? Color.parseColor("#4CAF50") : Color.parseColor("#9E9E9E"));
-        textCol.addView(statusView);
+        // Son mesaj preview
+        List<ChatMessage> msgs = chatHistory.get(name);
+        String lastMsg = "";
+        if (msgs != null && !msgs.isEmpty()) {
+            ChatMessage last = msgs.get(msgs.size() - 1);
+            lastMsg = last.isSent ? "Sen: " + last.text : last.text;
+            if (lastMsg.length() > 30) lastMsg = lastMsg.substring(0, 30) + "...";
+        } else {
+            lastMsg = isOnline ? "Online" : "Offline";
+        }
+
+        TextView previewView = new TextView(this);
+        previewView.setText(lastMsg);
+        previewView.setTextSize(13);
+        previewView.setTextColor(Color.parseColor("#757575"));
+        previewView.setSingleLine(true);
+        textCol.addView(previewView);
 
         item.addView(textCol);
 
@@ -248,7 +347,6 @@ public class MainActivity extends AppCompatActivity {
         dot.setBackground(dotBg);
         item.addView(dot);
 
-        // Tiklama
         item.setOnClickListener(v -> openChat(name));
         item.setClickable(true);
         item.setFocusable(true);
@@ -256,7 +354,10 @@ public class MainActivity extends AppCompatActivity {
         contactsList.addView(item);
     }
 
-    // ─── Avatar Ayarla ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // AVATAR
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void setupAvatar(TextView tv, String name) {
         String initial = name.substring(0, 1).toUpperCase();
         tv.setText(initial);
@@ -267,7 +368,10 @@ public class MainActivity extends AppCompatActivity {
         tv.setBackground(bg);
     }
 
-    // ─── Sohbet Mesajlarini Yukle ──────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // SOHBET MESAJLARINI YUKLE
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void loadChatMessages(String contactName) {
         chatContainer.removeAllViews();
         List<ChatMessage> messages = chatHistory.get(contactName);
@@ -278,7 +382,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ─── Ayarlar Dialogu ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // AYARLAR
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void showSettingsDialog() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Sunucu Ayarlari");
@@ -333,7 +440,10 @@ public class MainActivity extends AppCompatActivity {
         builder.show();
     }
 
-    // ─── Kullanici Adi ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // KULLANICI ADI
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void askUsername() {
         String savedName = prefs.getString("username", "");
         if (!savedName.isEmpty()) {
@@ -362,7 +472,10 @@ public class MainActivity extends AppCompatActivity {
         builder.show();
     }
 
-    // ─── Mesaj Gonder ──────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // MESAJ GONDER
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void sendUserMessage() {
         if (!isConnected || currentChatUser == null) {
             Toast.makeText(this, "Bagli degil veya kisi secilmedi!", Toast.LENGTH_SHORT).show();
@@ -371,45 +484,55 @@ public class MainActivity extends AppCompatActivity {
         String text = etInput.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // Sunucuya gonder
         sendRaw("TO:" + currentChatUser + ":" + text);
-
-        // Kendi ekranima ekle
         addBubbleToChat(text, true);
-
-        // Gecmise kaydet
         saveChatMessage(currentChatUser, text, true);
-
         etInput.setText("");
     }
 
     private void sendRaw(String message) {
         new Thread(() -> {
-            if (out != null) out.println(message);
+            try {
+                if (out != null) out.println(message);
+            } catch (Exception e) {
+                Log.e(TAG, "Gonderme hatasi", e);
+            }
         }).start();
     }
 
-    // ─── Mesaj Gecmisi ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // MESAJ GECMISI (HAFIZADA)
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void saveChatMessage(String contact, String text, boolean isSent) {
         if (!chatHistory.containsKey(contact)) {
             chatHistory.put(contact, new ArrayList<>());
         }
         chatHistory.get(contact).add(new ChatMessage(text, isSent));
+        // Kalici olarak kaydet
+        saveChatHistoryToStorage();
     }
 
-    // ─── Sunucuya Baglan ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // SUNUCUYA BAGLAN + OTO YENIDEN BAGLANTI + KEEPALIVE
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void connectToServer(String host, int port) {
+        shouldReconnect = true;
+        reconnectDelay = 3000;
         tvContactsStatus.setText("Baglaniliyor...");
         tvContactsStatus.setTextColor(Color.parseColor("#FFF59D"));
 
         new Thread(() -> {
             try {
                 socket = new Socket(host, port);
+                socket.setKeepAlive(true);
+                socket.setSoTimeout(0); // sonsuz bekle
                 out = new PrintWriter(socket.getOutputStream(), true);
                 in  = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 isConnected = true;
+                reconnectDelay = 3000; // basarili baglantida delay'i sifirla
 
-                // Sunucuya adimizi gonder
                 out.println("NAME:" + username);
 
                 mainHandler.post(() -> {
@@ -417,34 +540,90 @@ public class MainActivity extends AppCompatActivity {
                     tvContactsStatus.setTextColor(Color.parseColor("#A5D6A7"));
                 });
 
-                // Gelen mesajlari dinle
+                // Keepalive basla
+                startKeepalive();
+
                 String line;
                 while ((line = in.readLine()) != null) {
                     final String msg = line;
                     mainHandler.post(() -> handleIncoming(msg));
                 }
 
+                // Buraya geldiyse baglanti kopmu demek
                 mainHandler.post(() -> {
                     isConnected = false;
                     tvContactsStatus.setText("Baglanti kesildi");
                     tvContactsStatus.setTextColor(Color.parseColor("#EF9A9A"));
+                    stopKeepalive();
+                    scheduleReconnect();
                 });
 
             } catch (Exception e) {
-                Log.e("SocketErr", "Baglanti hatasi", e);
+                Log.e(TAG, "Baglanti hatasi", e);
                 mainHandler.post(() -> {
                     isConnected = false;
-                    tvContactsStatus.setText("Baglanamadi");
+                    tvContactsStatus.setText("Baglanamadi - Tekrar deneniyor...");
                     tvContactsStatus.setTextColor(Color.parseColor("#EF9A9A"));
+                    stopKeepalive();
+                    scheduleReconnect();
                 });
             }
         }).start();
     }
 
-    // ─── Gelen Mesajlari Isle ──────────────────────────────────────────────
+    // Otomatik yeniden baglanti zamanlayici
+    private void scheduleReconnect() {
+        if (!shouldReconnect) return;
+
+        if (reconnectRunnable != null) {
+            reconnectHandler.removeCallbacks(reconnectRunnable);
+        }
+
+        final int currentDelay = reconnectDelay;
+        tvContactsStatus.setText("Tekrar deneniyor (" + (currentDelay / 1000) + "s)...");
+
+        reconnectRunnable = () -> {
+            if (shouldReconnect && !isConnected) {
+                connectToServer(serverHost, serverPort);
+            }
+        };
+        reconnectHandler.postDelayed(reconnectRunnable, currentDelay);
+
+        // Exponential backoff: 3s -> 6s -> 12s -> 24s -> 30s max
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    }
+
+    // Keepalive: ngrok baglantinin idle kalmasini onler
+    private void startKeepalive() {
+        keepaliveHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isConnected && out != null) {
+                    new Thread(() -> {
+                        try {
+                            out.println("PING");
+                        } catch (Exception e) {
+                            Log.e(TAG, "Keepalive hatasi", e);
+                        }
+                    }).start();
+                }
+                if (isConnected) {
+                    keepaliveHandler.postDelayed(this, KEEPALIVE_INTERVAL);
+                }
+            }
+        }, KEEPALIVE_INTERVAL);
+    }
+
+    private void stopKeepalive() {
+        keepaliveHandler.removeCallbacksAndMessages(null);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // GELEN MESAJLARI ISLE
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void handleIncoming(String msg) {
         if (msg.startsWith("USERLIST:")) {
-            // Kullanici listesi: USERLIST:ali,veli,kerem
             String list = msg.substring(9);
             onlineUsers.clear();
             if (!list.isEmpty()) {
@@ -457,20 +636,17 @@ public class MainActivity extends AppCompatActivity {
             refreshContactsUI();
 
         } else if (msg.startsWith("ONLINE:")) {
-            // Birisi baglandi
             String user = msg.substring(7).trim();
             if (!onlineUsers.contains(user)) {
                 onlineUsers.add(user);
             }
             refreshContactsUI();
-            // Eger su an onunla sohbet ediyorsak durumu guncelle
             if (user.equals(currentChatUser)) {
                 tvChatStatus.setText("Online");
                 tvChatStatus.setTextColor(Color.parseColor("#A5D6A7"));
             }
 
         } else if (msg.startsWith("OFFLINE:")) {
-            // Birisi ayrildi
             String user = msg.substring(8).trim();
             onlineUsers.remove(user);
             refreshContactsUI();
@@ -480,25 +656,21 @@ public class MainActivity extends AppCompatActivity {
             }
 
         } else if (msg.startsWith("MSG:")) {
-            // Ozel mesaj: MSG:gonderici:mesaj
             String content = msg.substring(4);
             int colonIdx = content.indexOf(':');
             if (colonIdx > 0) {
                 String sender = content.substring(0, colonIdx);
                 String text   = content.substring(colonIdx + 1);
 
-                // Gecmise kaydet
                 saveChatMessage(sender, text, false);
 
-                // Eger su an bu kisiyle sohbet ediyorsak ekranda goster
                 if (sender.equals(currentChatUser)) {
                     addBubbleToChat(text, false);
                 } else {
-                    // Bildirim goster
                     Toast.makeText(this, sender + ": " + text, Toast.LENGTH_SHORT).show();
+                    refreshContactsUI(); // Son mesaj preview guncelle
                 }
 
-                // Gonderici listede yoksa ekle
                 if (!onlineUsers.contains(sender)) {
                     onlineUsers.add(sender);
                     refreshContactsUI();
@@ -506,17 +678,16 @@ public class MainActivity extends AppCompatActivity {
             }
 
         } else if (msg.startsWith("SYS:")) {
-            // Sistem mesaji
-            String sysMsg = msg.substring(4);
-            Toast.makeText(this, sysMsg, Toast.LENGTH_SHORT).show();
-
-        } else {
-            // Diger mesajlar (hosgeldin vs.)
-            Log.d("ChatApp", "Server: " + msg);
+            Toast.makeText(this, msg.substring(4), Toast.LENGTH_SHORT).show();
         }
     }
 
     private void disconnectServer() {
+        shouldReconnect = false;
+        stopKeepalive();
+        if (reconnectRunnable != null) {
+            reconnectHandler.removeCallbacks(reconnectRunnable);
+        }
         new Thread(() -> {
             try {
                 isConnected = false;
@@ -527,7 +698,10 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    // ─── Mesaj Balonu (Sohbet Ekranina) ────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // MESAJ BALONU
+    // ═══════════════════════════════════════════════════════════════════════
+
     private void addBubbleToChat(String message, boolean isSent) {
         TextView bubble = new TextView(this);
         bubble.setText(message);
@@ -539,7 +713,6 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, dpToPx(3), 0, dpToPx(3));
 
         if (isSent) {
             bubble.setTextColor(Color.WHITE);
@@ -561,7 +734,10 @@ public class MainActivity extends AppCompatActivity {
         chatScrollView.post(() -> chatScrollView.fullScroll(ScrollView.FOCUS_DOWN));
     }
 
-    // ─── Yardimci ──────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // YARDIMCI
+    // ═══════════════════════════════════════════════════════════════════════
+
     private int dpToPx(int dp) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
@@ -570,6 +746,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        saveChatHistoryToStorage();
         disconnectServer();
     }
 }
