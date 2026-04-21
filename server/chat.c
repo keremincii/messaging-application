@@ -20,20 +20,85 @@ pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define close_socket close
 #endif
 
-void broadcast_message(const char* sender, const char* message) {
-    char buffer[BUFFER_SIZE + 128];
-    snprintf(buffer, sizeof(buffer), "%s: %s\n", sender, message);
+/* Belirli bir kullaniciya online kullanici listesini gonder */
+void send_userlist(int client_index) {
+    char buffer[BUFFER_SIZE];
+    strcpy(buffer, "USERLIST:");
 
     pthread_mutex_lock(&clients_mutex);
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (clients[i].is_active && strcmp(clients[i].username, sender) != 0) {
+    int first = 1;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].is_active && i != client_index && strlen(clients[i].username) > 0) {
+            if (!first) strcat(buffer, ",");
+            strcat(buffer, clients[i].username);
+            first = 0;
+        }
+    }
+    strcat(buffer, "\n");
+    send(clients[client_index].sock, buffer, strlen(buffer), 0);
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+/* Herkese birinin online oldugunu bildir */
+void notify_online(const char* username) {
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "ONLINE:%s\n", username);
+
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].is_active && strlen(clients[i].username) > 0
+            && strcmp(clients[i].username, username) != 0) {
             send(clients[i].sock, buffer, strlen(buffer), 0);
         }
     }
     pthread_mutex_unlock(&clients_mutex);
 }
 
-void remove_client(int index) {
+/* Herkese birinin offline oldugunu bildir */
+void notify_offline(const char* username) {
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "OFFLINE:%s\n", username);
+
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].is_active && strlen(clients[i].username) > 0
+            && strcmp(clients[i].username, username) != 0) {
+            send(clients[i].sock, buffer, strlen(buffer), 0);
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+/* Ozel mesaj gonder: sadece aliciya ilet */
+void send_to_user(const char* sender, const char* recipient, const char* message) {
+    char buffer[BUFFER_SIZE];
+    snprintf(buffer, sizeof(buffer), "MSG:%s:%s\n", sender, message);
+
+    int found = 0;
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].is_active && strcmp(clients[i].username, recipient) == 0) {
+            send(clients[i].sock, buffer, strlen(buffer), 0);
+            found = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+
+    if (!found) {
+        snprintf(buffer, sizeof(buffer), "SYS:%s su an cevrim disi.\n", recipient);
+        pthread_mutex_lock(&clients_mutex);
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].is_active && strcmp(clients[i].username, sender) == 0) {
+                send(clients[i].sock, buffer, strlen(buffer), 0);
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
+    }
+}
+
+static void remove_client(int index) {
     pthread_mutex_lock(&clients_mutex);
     clients[index].is_active = 0;
     close_socket(clients[index].sock);
@@ -43,13 +108,12 @@ void remove_client(int index) {
 void* handle_client(void* arg) {
     int current_index = *((int*)arg);
     free(arg);
-    
+
     socket_t sock = clients[current_index].sock;
     char buffer[BUFFER_SIZE];
     int bytes_read;
 
-    // İlk mesaj olarak kullanıcı adını bekle
-    // Android uygulama bağlanınca otomatik olarak "NAME:kerem" gibi gönderecek
+    /* Ilk mesaj: NAME:kullaniciadi */
     memset(buffer, 0, sizeof(buffer));
     bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) {
@@ -58,53 +122,51 @@ void* handle_client(void* arg) {
     }
     buffer[strcspn(buffer, "\r\n")] = 0;
 
-    // "NAME:kullanici_adi" formatını kontrol et
     if (strncmp(buffer, "NAME:", 5) == 0) {
         pthread_mutex_lock(&clients_mutex);
-        strncpy(clients[current_index].username, buffer + 5, 63);
+        strncpy(clients[current_index].username, buffer + 5, MAX_USERNAME - 1);
         pthread_mutex_unlock(&clients_mutex);
     } else {
-        // NAME: olmadan direkt isim gelmişse
         pthread_mutex_lock(&clients_mutex);
-        strncpy(clients[current_index].username, buffer, 63);
+        strncpy(clients[current_index].username, buffer, MAX_USERNAME - 1);
         pthread_mutex_unlock(&clients_mutex);
     }
 
-    printf("[+] %s sohbete katildi.\n", clients[current_index].username);
+    printf("[+] %s baglandi.\n", clients[current_index].username);
     fflush(stdout);
 
-    // Kullanıcıya hoşgeldin mesajı gönder
-    char welcome[256];
-    snprintf(welcome, sizeof(welcome), "Hosgeldin %s! Mesaj yazmaya baslayabilirsin.\n", clients[current_index].username);
-    send(sock, welcome, strlen(welcome), 0);
+    /* Yeni kullaniciya mevcut kullanici listesini gonder */
+    send_userlist(current_index);
 
-    // Herkese bilgi ver
-    char join_msg[128];
-    snprintf(join_msg, sizeof(join_msg), "%s sohbete katildi.", clients[current_index].username);
-    broadcast_message("Sistem", join_msg);
+    /* Herkese bu kullanicinin online oldugunu bildir */
+    notify_online(clients[current_index].username);
 
-    // Mesajlaşma döngüsü
+    /* Mesaj dongusu */
     while (1) {
         memset(buffer, 0, sizeof(buffer));
         bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_read <= 0) {
             printf("[-] %s ayrildi.\n", clients[current_index].username);
             fflush(stdout);
-            char leave_msg[128];
-            snprintf(leave_msg, sizeof(leave_msg), "%s sohbetten ayrildi.", clients[current_index].username);
-            broadcast_message("Sistem", leave_msg);
+            notify_offline(clients[current_index].username);
             break;
         }
 
         buffer[strcspn(buffer, "\r\n")] = 0;
         if (strlen(buffer) == 0) continue;
 
-        // Terminalde göster
-        printf("[%s]: %s\n", clients[current_index].username, buffer);
-        fflush(stdout);
-
-        // Herkese yayınla
-        broadcast_message(clients[current_index].username, buffer);
+        /* Format: TO:alici:mesaj */
+        if (strncmp(buffer, "TO:", 3) == 0) {
+            char* recipient_start = buffer + 3;
+            char* msg_start = strchr(recipient_start, ':');
+            if (msg_start) {
+                *msg_start = '\0';
+                msg_start++;
+                printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
+                fflush(stdout);
+                send_to_user(clients[current_index].username, recipient_start, msg_start);
+            }
+        }
     }
 
     remove_client(current_index);

@@ -1,6 +1,8 @@
 #ifndef CHAT_H
 #define CHAT_H
 
+#include <pthread.h>
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
@@ -12,20 +14,22 @@ typedef int socket_t;
 #endif
 
 #define MAX_CLIENTS 100
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
+#define MAX_USERNAME 64
 
 typedef struct {
     socket_t sock;
-    char username[64];
+    char username[MAX_USERNAME];
     int is_active;
 } Client;
 
 extern Client clients[MAX_CLIENTS];
+extern pthread_mutex_t clients_mutex;
 
-// İstemci için thread fonksiyonu
 void* handle_client(void* arg);
-
-// Herkese mesaj gönderme
-void broadcast_message(const char* sender, const char* message);
+void send_to_user(const char* sender, const char* recipient, const char* message);
+void send_userlist(int client_index);
+void notify_online(const char* username);
+void notify_offline(const char* username);
 
 #endif
