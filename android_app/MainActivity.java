@@ -8,6 +8,9 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.util.Base64;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -35,6 +38,10 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -148,8 +155,21 @@ public class MainActivity extends AppCompatActivity {
         // Geri butonu
         btnBack.setOnClickListener(v -> showContactsList());
 
-        // Gonder butonu
+        // Gonder butonu - baslangicta soluk
+        btnSend.setAlpha(0.4f);
         btnSend.setOnClickListener(v -> sendUserMessage());
+
+        // Mesaj yazilinca gonder butonu canlansin
+        etInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                btnSend.setAlpha(s.toString().trim().length() > 0 ? 1.0f : 0.4f);
+            }
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
 
         // Klavyeden gonder
         etInput.setOnEditorActionListener((v, actionId, event) -> {
@@ -484,7 +504,9 @@ public class MainActivity extends AppCompatActivity {
         String text = etInput.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        sendRaw("TO:" + currentChatUser + ":" + text);
+        // Mesaji sifrele ve gonder
+        String encrypted = aesEncrypt(text);
+        sendRaw("TO:" + currentChatUser + ":ENC:" + encrypted);
         addBubbleToChat(text, true);
         saveChatMessage(currentChatUser, text, true);
         etInput.setText("");
@@ -660,7 +682,15 @@ public class MainActivity extends AppCompatActivity {
             int colonIdx = content.indexOf(':');
             if (colonIdx > 0) {
                 String sender = content.substring(0, colonIdx);
-                String text   = content.substring(colonIdx + 1);
+                String rawText = content.substring(colonIdx + 1);
+
+                // Sifreli mesajlari coz
+                String text;
+                if (rawText.startsWith("ENC:")) {
+                    text = aesDecrypt(rawText.substring(4));
+                } else {
+                    text = rawText;
+                }
 
                 saveChatMessage(sender, text, false);
 
@@ -668,7 +698,7 @@ public class MainActivity extends AppCompatActivity {
                     addBubbleToChat(text, false);
                 } else {
                     Toast.makeText(this, sender + ": " + text, Toast.LENGTH_SHORT).show();
-                    refreshContactsUI(); // Son mesaj preview guncelle
+                    refreshContactsUI();
                 }
 
                 if (!onlineUsers.contains(sender)) {
@@ -741,6 +771,42 @@ public class MainActivity extends AppCompatActivity {
     private int dpToPx(int dp) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AES-128-CBC SIFRELEME (Sunucu ile ayni anahtar)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private static final byte[] AES_KEY = "ChatApp2024Key!!".getBytes();
+    private static final byte[] AES_IV  = "ChatAppInitVec!!".getBytes();
+
+    private String aesEncrypt(String plaintext) {
+        try {
+            SecretKeySpec keySpec = new SecretKeySpec(AES_KEY, "AES");
+            IvParameterSpec ivSpec = new IvParameterSpec(AES_IV);
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec);
+            byte[] encrypted = cipher.doFinal(plaintext.getBytes("UTF-8"));
+            return Base64.encodeToString(encrypted, Base64.NO_WRAP);
+        } catch (Exception e) {
+            Log.e(TAG, "Sifreleme hatasi", e);
+            return plaintext;
+        }
+    }
+
+    private String aesDecrypt(String base64Encrypted) {
+        try {
+            SecretKeySpec keySpec = new SecretKeySpec(AES_KEY, "AES");
+            IvParameterSpec ivSpec = new IvParameterSpec(AES_IV);
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec);
+            byte[] decoded = Base64.decode(base64Encrypted, Base64.NO_WRAP);
+            byte[] decrypted = cipher.doFinal(decoded);
+            return new String(decrypted, "UTF-8");
+        } catch (Exception e) {
+            Log.e(TAG, "Sifre cozme hatasi", e);
+            return base64Encrypted;
+        }
     }
 
     @Override

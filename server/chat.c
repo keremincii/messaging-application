@@ -10,6 +10,7 @@
 #endif
 
 #include "chat.h"
+#include "crypto.h"
 
 Client clients[MAX_CLIENTS];
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -160,16 +161,35 @@ void* handle_client(void* arg) {
             continue;
         }
 
-        /* Format: TO:alici:mesaj */
+        /* Format: TO:alici:ENC:sifreli_mesaj veya TO:alici:mesaj */
         if (strncmp(buffer, "TO:", 3) == 0) {
             char* recipient_start = buffer + 3;
             char* msg_start = strchr(recipient_start, ':');
             if (msg_start) {
                 *msg_start = '\0';
                 msg_start++;
-                printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
-                fflush(stdout);
-                send_to_user(clients[current_index].username, recipient_start, msg_start);
+
+                /* Sifreli mesaj mi kontrol et */
+                if (strncmp(msg_start, "ENC:", 4) == 0) {
+                    char* encrypted_body = msg_start + 4;
+                    /* Sifre coz ve logla */
+                    char* plaintext = aes_decrypt(encrypted_body);
+                    if (plaintext) {
+                        printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, plaintext);
+                        fflush(stdout);
+                        free(plaintext);
+                    } else {
+                        printf("[%s -> %s]: (sifre cozulemedi)\n", clients[current_index].username, recipient_start);
+                        fflush(stdout);
+                    }
+                    /* Sifreli halini oldugu gibi ilet */
+                    send_to_user(clients[current_index].username, recipient_start, msg_start);
+                } else {
+                    /* Sifresiz mesaj (eski istemciler icin) */
+                    printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
+                    fflush(stdout);
+                    send_to_user(clients[current_index].username, recipient_start, msg_start);
+                }
             }
         }
     }
