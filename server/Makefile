@@ -10,7 +10,7 @@ else
 	EXEC = server
 endif
 
-SRCS = main.c auth.c chat.c
+SRCS = main.c chat.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(EXEC)

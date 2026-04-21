@@ -26,38 +26,41 @@ int main() {
     }
 #endif
 
-    // Soket oluştur
     if ((server_sock = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
         printf("Soket olusturulamadi.\n");
         return 1;
     }
 
+    // Port yeniden kullanımı (restart kolaylığı için)
+    int opt = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(PORT);
 
-    // Bind
     if (bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
         printf("Bind hatasi.\n");
         return 1;
     }
 
-    // Dinle
     listen(server_sock, 10);
-    printf("Sunucu %d portunda dinleniyor...\n", PORT);
+    printf("========================================\n");
+    printf("  ChatApp Sunucusu Baslatildi!\n");
+    printf("  Port: %d\n", PORT);
+    printf("  Mesajlar asagida gorunecek...\n");
+    printf("========================================\n");
+    fflush(stdout);
 
     int c = sizeof(struct sockaddr_in);
-    
-    // İstemci döngüsü
+
     while (1) {
         socket_t new_sock = accept(server_sock, (struct sockaddr*)&client_addr, (socklen_t*)&c);
         if (new_sock == INVALID_SOCKET) {
-            printf("Bağlantı kabul edilemedi.\n");
+            printf("Baglanti kabul edilemedi.\n");
             continue;
         }
-        printf("[LOG] Yeni bir baglanti kuruldu.\n");
 
-        // Boş istemci slotu bul
         int slot_found = -1;
         extern pthread_mutex_t clients_mutex;
         pthread_mutex_lock(&clients_mutex);
@@ -65,7 +68,6 @@ int main() {
             if (!clients[i].is_active) {
                 clients[i].sock = new_sock;
                 clients[i].is_active = 1;
-                clients[i].is_logged_in = 0;
                 memset(clients[i].username, 0, sizeof(clients[i].username));
                 slot_found = i;
                 break;
@@ -81,7 +83,6 @@ int main() {
                 printf("Thread olusturulamadi.\n");
                 free(arg);
             }
-            // Thread'i detach et (bittiğinde kaynakları otomatik temizlesin)
             pthread_detach(sn_thread);
         } else {
             char full_msg[] = "Sunucu dolu.\n";

@@ -1,31 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="#ECECEC">
+    android:background="#ECECEC"
+    android:fitsSystemWindows="true">
 
-    <!-- === HEADER BAR === -->
+    <!-- HEADER BAR -->
     <LinearLayout
+        android:id="@+id/headerBar"
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="60dp"
+        android:layout_alignParentTop="true"
         android:background="#1A73E8"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingStart="16dp"
-        android:paddingEnd="12dp"
+        android:paddingEnd="8dp"
         android:elevation="6dp">
 
-        <!-- Avatar ikonu -->
         <TextView
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:text="💬"
-            android:textSize="22sp"
+            android:textSize="20sp"
             android:gravity="center"
-            android:layout_marginEnd="12dp" />
+            android:layout_marginEnd="10dp" />
 
-        <!-- Başlık ve Durum -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -37,66 +37,52 @@
                 android:layout_height="wrap_content"
                 android:text="ChatApp"
                 android:textColor="#FFFFFF"
-                android:textSize="18sp"
+                android:textSize="17sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tvStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Bağlı değil"
+                android:text="Bağlanıyor..."
                 android:textColor="#BBDEFB"
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Bağlan Butonu -->
+        <!-- AYARLAR BUTONU -->
         <Button
-            android:id="@+id/btnConnect"
+            android:id="@+id/btnSettings"
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="Bağlan"
-            android:textColor="#1A73E8"
+            android:layout_height="44dp"
+            android:text="Ayar"
             android:textSize="13sp"
+            android:textColor="#1A73E8"
             android:textStyle="bold"
             android:background="#FFFFFF"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp" />
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp" />
 
     </LinearLayout>
 
-    <!-- === MESAJ ALANI === -->
-    <ScrollView
-        android:id="@+id/scrollView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:clipToPadding="false"
-        android:background="#ECECEC">
-
-        <LinearLayout
-            android:id="@+id/chatContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="8dp"
-            android:paddingTop="12dp"
-            android:paddingBottom="12dp" />
-    </ScrollView>
-
-    <!-- === INPUT BAR === -->
+    <!-- INPUT BAR (ALTA SABİT) -->
     <LinearLayout
+        android:id="@+id/inputBar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="64dp"
+        android:layout_alignParentBottom="true"
         android:orientation="horizontal"
         android:background="#FFFFFF"
-        android:padding="8dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
         android:elevation="8dp"
         android:gravity="center_vertical">
 
         <EditText
             android:id="@+id/etInput"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="50dp"
             android:layout_weight="1"
             android:hint="Mesaj yazın..."
             android:background="@drawable/input_bg"
@@ -108,15 +94,33 @@
 
         <Button
             android:id="@+id/btnSend"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:layout_marginStart="8dp"
             android:text="➤"
-            android:textSize="18sp"
+            android:textSize="20sp"
             android:textColor="#FFFFFF"
             android:background="@drawable/btn_send_bg"
             android:padding="0dp" />
 
     </LinearLayout>
 
-</LinearLayout>
+    <!-- MESAJ ALANI -->
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/headerBar"
+        android:layout_above="@id/inputBar"
+        android:clipToPadding="false"
+        android:background="#ECECEC">
+
+        <LinearLayout
+            android:id="@+id/chatContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="10dp" />
+    </ScrollView>
+
+</RelativeLayout>

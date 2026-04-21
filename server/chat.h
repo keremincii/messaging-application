@@ -17,7 +17,6 @@ typedef int socket_t;
 typedef struct {
     socket_t sock;
     char username[64];
-    int is_logged_in;
     int is_active;
 } Client;
 
@@ -26,10 +25,7 @@ extern Client clients[MAX_CLIENTS];
 // İstemci için thread fonksiyonu
 void* handle_client(void* arg);
 
-// Herkese mesaj gönderme (Yayın/Broadcast)
+// Herkese mesaj gönderme
 void broadcast_message(const char* sender, const char* message);
-
-// Özel mesaj gönderme (Private Message)
-void send_private_message(const char* sender, const char* recipient, const char* message);
 
 #endif
