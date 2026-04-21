@@ -275,9 +275,15 @@ public class MainActivity extends AppCompatActivity {
         contactsList.removeAllViews();
 
         // Oncelik: online kullanicilar + gecmisi olan offline kullanicilar
-        List<String> allContacts = new ArrayList<>(onlineUsers);
+        // Kendi adimizi ve tekrarlari filtrele
+        List<String> allContacts = new ArrayList<>();
+        for (String user : onlineUsers) {
+            if (!user.equals(username) && !allContacts.contains(user)) {
+                allContacts.add(user);
+            }
+        }
         for (String contact : chatHistory.keySet()) {
-            if (!allContacts.contains(contact)) {
+            if (!contact.equals(username) && !allContacts.contains(contact)) {
                 allContacts.add(contact);
             }
         }
@@ -652,14 +658,19 @@ public class MainActivity extends AppCompatActivity {
                 String[] users = list.split(",");
                 for (String u : users) {
                     String trimmed = u.trim();
-                    if (!trimmed.isEmpty()) onlineUsers.add(trimmed);
+                    // Kendi adimizi ve boslari filtrele
+                    if (!trimmed.isEmpty() && !trimmed.equals(username)
+                            && !onlineUsers.contains(trimmed)) {
+                        onlineUsers.add(trimmed);
+                    }
                 }
             }
             refreshContactsUI();
 
         } else if (msg.startsWith("ONLINE:")) {
             String user = msg.substring(7).trim();
-            if (!onlineUsers.contains(user)) {
+            // Kendi adimizi ekleme, tekrardan kacin
+            if (!user.equals(username) && !onlineUsers.contains(user)) {
                 onlineUsers.add(user);
             }
             refreshContactsUI();

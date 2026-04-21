@@ -21,7 +21,53 @@ pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define close_socket close
 #endif
 
-/* Belirli bir kullaniciya online kullanici listesini gonder */
+/* ── Bekleyen Mesajlar (Offline kullanicilara) ─────────────── */
+#define MAX_PENDING 500
+
+typedef struct {
+    char sender[MAX_USERNAME];
+    char recipient[MAX_USERNAME];
+    char message[BUFFER_SIZE];
+    int active;
+} PendingMsg;
+
+static PendingMsg pending[MAX_PENDING];
+static pthread_mutex_t pending_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Bekleyen mesaj kaydet */
+static void store_pending(const char* sender, const char* recipient, const char* message) {
+    pthread_mutex_lock(&pending_mutex);
+    for (int i = 0; i < MAX_PENDING; i++) {
+        if (!pending[i].active) {
+            strncpy(pending[i].sender, sender, MAX_USERNAME - 1);
+            strncpy(pending[i].recipient, recipient, MAX_USERNAME - 1);
+            strncpy(pending[i].message, message, BUFFER_SIZE - 1);
+            pending[i].active = 1;
+            printf("[*] Mesaj kuyruga alindi: %s -> %s\n", sender, recipient);
+            fflush(stdout);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&pending_mutex);
+}
+
+/* Kullanici online olunca bekleyen mesajlarini ilet */
+static void deliver_pending(const char* username, socket_t sock) {
+    pthread_mutex_lock(&pending_mutex);
+    for (int i = 0; i < MAX_PENDING; i++) {
+        if (pending[i].active && strcmp(pending[i].recipient, username) == 0) {
+            char buffer[BUFFER_SIZE];
+            snprintf(buffer, sizeof(buffer), "MSG:%s:%s\n", pending[i].sender, pending[i].message);
+            send(sock, buffer, strlen(buffer), 0);
+            printf("[*] Bekleyen mesaj iletildi: %s -> %s\n", pending[i].sender, username);
+            fflush(stdout);
+            pending[i].active = 0;
+        }
+    }
+    pthread_mutex_unlock(&pending_mutex);
+}
+
+/* ── Kullanici Listesi Gonder ──────────────────────────────── */
 void send_userlist(int client_index) {
     char buffer[BUFFER_SIZE];
     strcpy(buffer, "USERLIST:");
@@ -40,7 +86,7 @@ void send_userlist(int client_index) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Herkese birinin online oldugunu bildir */
+/* ── Online/Offline Bildir ─────────────────────────────────── */
 void notify_online(const char* username) {
     char buffer[256];
     snprintf(buffer, sizeof(buffer), "ONLINE:%s\n", username);
@@ -55,7 +101,6 @@ void notify_online(const char* username) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Herkese birinin offline oldugunu bildir */
 void notify_offline(const char* username) {
     char buffer[256];
     snprintf(buffer, sizeof(buffer), "OFFLINE:%s\n", username);
@@ -70,7 +115,7 @@ void notify_offline(const char* username) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Ozel mesaj gonder: sadece aliciya ilet */
+/* ── Ozel Mesaj Gonder ─────────────────────────────────────── */
 void send_to_user(const char* sender, const char* recipient, const char* message) {
     char buffer[BUFFER_SIZE];
     snprintf(buffer, sizeof(buffer), "MSG:%s:%s\n", sender, message);
@@ -87,7 +132,11 @@ void send_to_user(const char* sender, const char* recipient, const char* message
     pthread_mutex_unlock(&clients_mutex);
 
     if (!found) {
-        snprintf(buffer, sizeof(buffer), "SYS:%s su an cevrim disi.\n", recipient);
+        /* Alici offline - mesaji kuyruga al */
+        store_pending(sender, recipient, message);
+
+        /* Gondericiye bildir */
+        snprintf(buffer, sizeof(buffer), "SYS:%s cevrim disi. Mesaj online olunca iletilecek.\n", recipient);
         pthread_mutex_lock(&clients_mutex);
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].is_active && strcmp(clients[i].username, sender) == 0) {
@@ -142,6 +191,9 @@ void* handle_client(void* arg) {
     /* Herkese bu kullanicinin online oldugunu bildir */
     notify_online(clients[current_index].username);
 
+    /* Bekleyen mesajlari ilet */
+    deliver_pending(clients[current_index].username, sock);
+
     /* Mesaj dongusu */
     while (1) {
         memset(buffer, 0, sizeof(buffer));
@@ -172,7 +224,6 @@ void* handle_client(void* arg) {
                 /* Sifreli mesaj mi kontrol et */
                 if (strncmp(msg_start, "ENC:", 4) == 0) {
                     char* encrypted_body = msg_start + 4;
-                    /* Sifre coz ve logla */
                     char* plaintext = aes_decrypt(encrypted_body);
                     if (plaintext) {
                         printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, plaintext);
@@ -182,10 +233,8 @@ void* handle_client(void* arg) {
                         printf("[%s -> %s]: (sifre cozulemedi)\n", clients[current_index].username, recipient_start);
                         fflush(stdout);
                     }
-                    /* Sifreli halini oldugu gibi ilet */
                     send_to_user(clients[current_index].username, recipient_start, msg_start);
                 } else {
-                    /* Sifresiz mesaj (eski istemciler icin) */
                     printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
                     fflush(stdout);
                     send_to_user(clients[current_index].username, recipient_start, msg_start);
