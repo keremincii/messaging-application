@@ -166,8 +166,8 @@ void* handle_client(void* arg) {
     int bytes_read;
 
     /* Ilk mesaj: AUTH:kullaniciadi:token (veya geriye donuk uyumluluk icin NAME:kullaniciadi) */
-    memset(buffer, 0, sizeof(buffer));
-    bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    memset(buffer, 0, BUFFER_SIZE);
+    bytes_read = recv(sock, buffer, BUFFER_SIZE - 1, 0);
     if (bytes_read <= 0) {
         remove_client(current_index);
         return NULL;
