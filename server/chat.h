@@ -14,7 +14,7 @@ typedef int socket_t;
 #endif
 
 #define MAX_CLIENTS 100
-#define BUFFER_SIZE 2048
+#define BUFFER_SIZE 100000
 #define MAX_USERNAME 64
 
 typedef struct {

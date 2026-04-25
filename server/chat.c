@@ -11,6 +11,7 @@
 
 #include "chat.h"
 #include "crypto.h"
+#include "auth.h"
 
 Client clients[MAX_CLIENTS];
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -160,10 +161,11 @@ void* handle_client(void* arg) {
     free(arg);
 
     socket_t sock = clients[current_index].sock;
-    char buffer[BUFFER_SIZE];
+    char* buffer = malloc(BUFFER_SIZE);
+    if (!buffer) { remove_client(current_index); return NULL; }
     int bytes_read;
 
-    /* Ilk mesaj: NAME:kullaniciadi */
+    /* Ilk mesaj: AUTH:kullaniciadi:token (veya geriye donuk uyumluluk icin NAME:kullaniciadi) */
     memset(buffer, 0, sizeof(buffer));
     bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) {
@@ -172,15 +174,54 @@ void* handle_client(void* arg) {
     }
     buffer[strcspn(buffer, "\r\n")] = 0;
 
-    if (strncmp(buffer, "NAME:", 5) == 0) {
-        pthread_mutex_lock(&clients_mutex);
-        strncpy(clients[current_index].username, buffer + 5, MAX_USERNAME - 1);
-        pthread_mutex_unlock(&clients_mutex);
+    char temp_username[MAX_USERNAME] = {0};
+    char temp_token[64] = {0};
+
+    if (strncmp(buffer, "AUTH:", 5) == 0) {
+        char* name_start = buffer + 5;
+        char* token_start = strchr(name_start, ':');
+        if (token_start) {
+            *token_start = '\0';
+            token_start++;
+            strncpy(temp_username, name_start, MAX_USERNAME - 1);
+            strncpy(temp_token, token_start, 63);
+        } else {
+            strncpy(temp_username, name_start, MAX_USERNAME - 1);
+            strcpy(temp_token, "legacy");
+        }
+    } else if (strncmp(buffer, "NAME:", 5) == 0) {
+        strncpy(temp_username, buffer + 5, MAX_USERNAME - 1);
+        strcpy(temp_token, "legacy");
     } else {
-        pthread_mutex_lock(&clients_mutex);
-        strncpy(clients[current_index].username, buffer, MAX_USERNAME - 1);
-        pthread_mutex_unlock(&clients_mutex);
+        strncpy(temp_username, buffer, MAX_USERNAME - 1);
+        strcpy(temp_token, "legacy");
     }
+
+    /* Yetkilendirme (Authentication) Islemi */
+    int auth_success = 0;
+    if (register_user(temp_username, temp_token)) {
+        auth_success = 1; /* Yeni kullanici, basariyla kaydedildi */
+    } else if (login_user(temp_username, temp_token)) {
+        auth_success = 1; /* Mevcut kullanici, token eslesti */
+    }
+
+    if (!auth_success) {
+        /* Kullanici adi baskasina ait */
+        char fail_msg[] = "AUTH_FAIL\n";
+        send(sock, fail_msg, strlen(fail_msg), 0);
+        printf("[-] Yetkilendirme reddedildi: %s (Hatali cihaz/token)\n", temp_username);
+        fflush(stdout);
+        remove_client(current_index);
+        return NULL;
+    }
+
+    /* Basarili giris */
+    char ok_msg[] = "AUTH_OK\n";
+    send(sock, ok_msg, strlen(ok_msg), 0);
+
+    pthread_mutex_lock(&clients_mutex);
+    strncpy(clients[current_index].username, temp_username, MAX_USERNAME - 1);
+    pthread_mutex_unlock(&clients_mutex);
 
     printf("[+] %s baglandi.\n", clients[current_index].username);
     fflush(stdout);
@@ -194,55 +235,65 @@ void* handle_client(void* arg) {
     /* Bekleyen mesajlari ilet */
     deliver_pending(clients[current_index].username, sock);
 
-    /* Mesaj dongusu */
+    /* Mesaj dongusu (TCP Fragmentasyonunu ve Birlestirmeyi cozmek icin stream yontemi) */
+    int total_bytes = 0;
     while (1) {
-        memset(buffer, 0, sizeof(buffer));
-        bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
+        bytes_read = recv(sock, buffer + total_bytes, BUFFER_SIZE - 1 - total_bytes, 0);
         if (bytes_read <= 0) {
             printf("[-] %s ayrildi.\n", clients[current_index].username);
             fflush(stdout);
             notify_offline(clients[current_index].username);
             break;
         }
+        total_bytes += bytes_read;
+        buffer[total_bytes] = '\0';
 
-        buffer[strcspn(buffer, "\r\n")] = 0;
-        if (strlen(buffer) == 0) continue;
+        char* line_start = buffer;
+        char* newline_pos;
+        
+        while ((newline_pos = strchr(line_start, '\n')) != NULL) {
+            *newline_pos = '\0'; // Satiri kopar
+            char* line = line_start;
+            int len = strlen(line);
+            if (len > 0 && line[len-1] == '\r') line[len-1] = '\0';
+            
+            if (strlen(line) > 0 && strcmp(line, "PING") != 0) {
+                if (strncmp(line, "TO:", 3) == 0) {
+                    char* recipient_start = line + 3;
+                    char* msg_start = strchr(recipient_start, ':');
+                    if (msg_start) {
+                        *msg_start = '\0';
+                        msg_start++;
 
-        /* Keepalive PING - sessizce yoksay */
-        if (strcmp(buffer, "PING") == 0) {
-            continue;
-        }
-
-        /* Format: TO:alici:ENC:sifreli_mesaj veya TO:alici:mesaj */
-        if (strncmp(buffer, "TO:", 3) == 0) {
-            char* recipient_start = buffer + 3;
-            char* msg_start = strchr(recipient_start, ':');
-            if (msg_start) {
-                *msg_start = '\0';
-                msg_start++;
-
-                /* Sifreli mesaj mi kontrol et */
-                if (strncmp(msg_start, "ENC:", 4) == 0) {
-                    char* encrypted_body = msg_start + 4;
-                    char* plaintext = aes_decrypt(encrypted_body);
-                    if (plaintext) {
-                        printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, plaintext);
-                        fflush(stdout);
-                        free(plaintext);
-                    } else {
-                        printf("[%s -> %s]: (sifre cozulemedi)\n", clients[current_index].username, recipient_start);
-                        fflush(stdout);
+                        /* Sifreli mesaj mi kontrol et */
+                        if (strncmp(msg_start, "ENC:", 4) == 0) {
+                            char* encrypted_body = msg_start + 4;
+                            char* plaintext = aes_decrypt(encrypted_body);
+                            if (plaintext) {
+                                printf("[%s -> %s]: (Sifreli Mesaj/Foto %d bytes)\n", clients[current_index].username, recipient_start, (int)strlen(plaintext));
+                                fflush(stdout);
+                                free(plaintext);
+                            }
+                            send_to_user(clients[current_index].username, recipient_start, msg_start);
+                        } else {
+                            printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
+                            fflush(stdout);
+                            send_to_user(clients[current_index].username, recipient_start, msg_start);
+                        }
                     }
-                    send_to_user(clients[current_index].username, recipient_start, msg_start);
-                } else {
-                    printf("[%s -> %s]: %s\n", clients[current_index].username, recipient_start, msg_start);
-                    fflush(stdout);
-                    send_to_user(clients[current_index].username, recipient_start, msg_start);
                 }
             }
+            line_start = newline_pos + 1;
         }
+
+        int remaining = total_bytes - (line_start - buffer);
+        if (remaining > 0) {
+            memmove(buffer, line_start, remaining);
+        }
+        total_bytes = remaining;
     }
 
+    free(buffer);
     remove_client(current_index);
     return NULL;
 }

@@ -45,8 +45,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final String DEFAULT_HOST = "0.tcp.eu.ngrok.io";
-    private static final int    DEFAULT_PORT = 18294;
+    private static final String DEFAULT_HOST = "178.104.241.34";
+    private static final int    DEFAULT_PORT = 8080;
     private static final String TAG = "ChatApp";
 
     // Avatar renkleri
@@ -73,7 +73,7 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout chatContainer;
     private ScrollView   chatScrollView;
     private EditText     etInput;
-    private Button       btnSend, btnBack;
+    private Button       btnSend, btnBack, btnImage;
     private TextView     tvChatName, tvChatStatus, tvChatAvatar;
 
     // Soket
@@ -96,6 +96,7 @@ public class MainActivity extends AppCompatActivity {
     // Kullanici bilgileri
     private String username = "Kullanici";
     private String currentChatUser = null;
+    private String deviceToken = "";
 
     // Kisi listesi ve mesaj gecmisi
     private List<String> onlineUsers = new ArrayList<>();
@@ -141,6 +142,7 @@ public class MainActivity extends AppCompatActivity {
         chatScrollView  = findViewById(R.id.chatScrollView);
         etInput         = findViewById(R.id.etInput);
         btnSend         = findViewById(R.id.btnSend);
+        btnImage        = findViewById(R.id.btnImage);
         btnBack         = findViewById(R.id.btnBack);
         tvChatName      = findViewById(R.id.tvChatName);
         tvChatStatus    = findViewById(R.id.tvChatStatus);
@@ -158,6 +160,12 @@ public class MainActivity extends AppCompatActivity {
         // Gonder butonu - baslangicta soluk
         btnSend.setAlpha(0.4f);
         btnSend.setOnClickListener(v -> sendUserMessage());
+
+        btnImage.setOnClickListener(v -> {
+            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_PICK);
+            intent.setType("image/*");
+            startActivityForResult(intent, 100);
+        });
 
         // Mesaj yazilinca gonder butonu canlansin
         etInput.addTextChangedListener(new TextWatcher() {
@@ -182,6 +190,38 @@ public class MainActivity extends AppCompatActivity {
 
         // Ilk acilista ad sor, sonra otomatik baglan
         askUsername();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 100 && resultCode == RESULT_OK && data != null) {
+            try {
+                android.net.Uri uri = data.getData();
+                android.graphics.Bitmap bitmap = android.provider.MediaStore.Images.Media.getBitmap(getContentResolver(), uri);
+                
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                float ratio = Math.min(800.0f / width, 800.0f / height);
+                if (ratio < 1.0) {
+                    bitmap = android.graphics.Bitmap.createScaledBitmap(bitmap, (int)(width * ratio), (int)(height * ratio), true);
+                }
+                
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 60, baos);
+                byte[] imageBytes = baos.toByteArray();
+                String base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP);
+                
+                String encrypted = aesEncrypt("[IMG]" + base64Image);
+                sendRaw("TO:" + currentChatUser + ":ENC:" + encrypted);
+                
+                addBubbleToChat("[IMG]" + base64Image, true);
+                saveChatMessage(currentChatUser, "[IMG]" + base64Image, true);
+            } catch (Exception e) {
+                e.printStackTrace();
+                Toast.makeText(this, "Fotograf secilemedi", Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     @Override
@@ -471,6 +511,12 @@ public class MainActivity extends AppCompatActivity {
     // ═══════════════════════════════════════════════════════════════════════
 
     private void askUsername() {
+        deviceToken = prefs.getString("device_token", "");
+        if (deviceToken.isEmpty()) {
+            deviceToken = java.util.UUID.randomUUID().toString();
+            prefs.edit().putString("device_token", deviceToken).apply();
+        }
+
         String savedName = prefs.getString("username", "");
         if (!savedName.isEmpty()) {
             username = savedName;
@@ -561,7 +607,7 @@ public class MainActivity extends AppCompatActivity {
                 isConnected = true;
                 reconnectDelay = 3000; // basarili baglantida delay'i sifirla
 
-                out.println("NAME:" + username);
+                out.println("AUTH:" + username + ":" + deviceToken);
 
                 mainHandler.post(() -> {
                     tvContactsStatus.setText("Baglandi - " + username);
@@ -651,7 +697,16 @@ public class MainActivity extends AppCompatActivity {
     // ═══════════════════════════════════════════════════════════════════════
 
     private void handleIncoming(String msg) {
-        if (msg.startsWith("USERLIST:")) {
+        if (msg.startsWith("AUTH_FAIL")) {
+            shouldReconnect = false;
+            disconnectServer();
+            prefs.edit().remove("username").apply();
+            username = "";
+            Toast.makeText(this, "Bu isim baska bir cihaza kayitli! Lutfen farkli bir isim secin.", Toast.LENGTH_LONG).show();
+            askUsername();
+        } else if (msg.startsWith("AUTH_OK")) {
+            // Yetkilendirme basarili
+        } else if (msg.startsWith("USERLIST:")) {
             String list = msg.substring(9);
             onlineUsers.clear();
             if (!list.isEmpty()) {
@@ -744,6 +799,42 @@ public class MainActivity extends AppCompatActivity {
     // ═══════════════════════════════════════════════════════════════════════
 
     private void addBubbleToChat(String message, boolean isSent) {
+        if (message != null && message.startsWith("[IMG]")) {
+            try {
+                String base64 = message.substring(5);
+                byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT);
+                android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                
+                android.widget.ImageView iv = new android.widget.ImageView(this);
+                iv.setImageBitmap(bmp);
+                iv.setAdjustViewBounds(true);
+                iv.setMaxWidth(dpToPx(240));
+                iv.setMaxHeight(dpToPx(300));
+                
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setShape(GradientDrawable.RECTANGLE);
+                if (isSent) {
+                    bg.setColor(Color.parseColor("#1A73E8"));
+                    bg.setCornerRadii(new float[]{28, 28, 28, 28, 4, 4, 28, 28});
+                    params.gravity = Gravity.END;
+                    params.setMargins(dpToPx(64), dpToPx(3), dpToPx(8), dpToPx(3));
+                } else {
+                    bg.setColor(Color.WHITE);
+                    bg.setCornerRadii(new float[]{4, 4, 28, 28, 28, 28, 28, 28});
+                    params.gravity = Gravity.START;
+                    params.setMargins(dpToPx(8), dpToPx(3), dpToPx(64), dpToPx(3));
+                }
+                iv.setBackground(bg);
+                iv.setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4));
+                iv.setLayoutParams(params);
+                chatContainer.addView(iv);
+                chatScrollView.post(() -> chatScrollView.fullScroll(ScrollView.FOCUS_DOWN));
+            } catch (Exception e) { e.printStackTrace(); }
+            return;
+        }
+
         TextView bubble = new TextView(this);
         bubble.setText(message);
         bubble.setTextSize(15);
