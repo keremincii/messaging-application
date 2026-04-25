@@ -132,7 +132,9 @@ void send_to_user(const char* sender, const char* recipient, const char* message
     }
     pthread_mutex_unlock(&clients_mutex);
 
-    if (!found) {
+    if (found) {
+        printf("[+] Mesaj iletildi: %s -> %s\n", sender, recipient);
+    } else {
         /* Alici offline - mesaji kuyruga al */
         store_pending(sender, recipient, message);
 
@@ -270,7 +272,7 @@ void* handle_client(void* arg) {
                             char* encrypted_body = msg_start + 4;
                             char* plaintext = aes_decrypt(encrypted_body);
                             if (plaintext) {
-                                printf("[%s -> %s]: (Sifreli Mesaj/Foto %d bytes)\n", clients[current_index].username, recipient_start, (int)strlen(plaintext));
+                                printf("\n--- YENI MESAJ ---\n[%s -> %s]: (Sifreli Icerik: %d bytes)\n", clients[current_index].username, recipient_start, (int)strlen(plaintext));
                                 fflush(stdout);
                                 free(plaintext);
                             }
