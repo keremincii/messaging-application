@@ -32,6 +32,7 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -63,7 +64,6 @@ public class MainActivity extends AppCompatActivity {
 
     // UI - Genel
     private ViewFlipper viewFlipper;
-    private Button      btnSettings;
 
     // UI - Kisi Listesi (Ekran 0)
     private LinearLayout contactsList;
@@ -73,8 +73,8 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout chatContainer;
     private ScrollView   chatScrollView;
     private EditText     etInput;
-    private Button       btnSend, btnBack, btnImage;
-    private TextView     tvChatName, tvChatStatus, tvChatAvatar;
+    private Button       btnSend;
+    private TextView     btnBack, btnImage, tvChatName, tvChatStatus, tvChatAvatar;
 
     // Soket
     private Socket         socket;
@@ -130,12 +130,11 @@ public class MainActivity extends AppCompatActivity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 
         prefs = getSharedPreferences("ChatAppPrefs", MODE_PRIVATE);
-        serverHost = prefs.getString("server_host", DEFAULT_HOST);
-        serverPort = prefs.getInt("server_port", DEFAULT_PORT);
+        serverHost = DEFAULT_HOST;
+        serverPort = DEFAULT_PORT;
 
         // View baglantilari
         viewFlipper     = findViewById(R.id.viewFlipper);
-        btnSettings     = findViewById(R.id.btnSettings);
         contactsList    = findViewById(R.id.contactsList);
         tvContactsStatus= findViewById(R.id.tvContactsStatus);
         chatContainer   = findViewById(R.id.chatContainer);
@@ -150,9 +149,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Mesaj gecmisini yukle
         loadChatHistoryFromStorage();
-
-        // Ayarlar butonu
-        btnSettings.setOnClickListener(v -> showSettingsDialog());
 
         // Geri butonu
         btnBack.setOnClickListener(v -> showContactsList());
@@ -213,10 +209,17 @@ public class MainActivity extends AppCompatActivity {
                 String base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP);
                 
                 String encrypted = aesEncrypt("[IMG]" + base64Image);
-                sendRaw("TO:" + currentChatUser + ":ENC:" + encrypted);
+                String rawMsg = "TO:" + currentChatUser + ":ENC:" + encrypted;
                 
                 addBubbleToChat("[IMG]" + base64Image, true);
                 saveChatMessage(currentChatUser, "[IMG]" + base64Image, true);
+                
+                if (isConnected) {
+                    sendRaw(rawMsg);
+                } else {
+                    saveToOfflineQueue(rawMsg);
+                    Toast.makeText(this, "Çevrimdışısınız, fotoğraf kuyruğa eklendi.", Toast.LENGTH_SHORT).show();
+                }
             } catch (Exception e) {
                 e.printStackTrace();
                 Toast.makeText(this, "Fotograf secilemedi", Toast.LENGTH_SHORT).show();
@@ -448,63 +451,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // AYARLAR
-    // ═══════════════════════════════════════════════════════════════════════
-
-    private void showSettingsDialog() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Sunucu Ayarlari");
-
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dpToPx(24), dpToPx(16), dpToPx(24), dpToPx(8));
-
-        TextView hostLabel = new TextView(this);
-        hostLabel.setText("Sunucu Adresi (Host):");
-        hostLabel.setTextSize(14);
-        layout.addView(hostLabel);
-
-        EditText hostInput = new EditText(this);
-        hostInput.setText(serverHost);
-        hostInput.setSingleLine(true);
-        layout.addView(hostInput);
-
-        TextView portLabel = new TextView(this);
-        portLabel.setText("Port Numarasi:");
-        portLabel.setTextSize(14);
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        plp.setMargins(0, dpToPx(12), 0, 0);
-        portLabel.setLayoutParams(plp);
-        layout.addView(portLabel);
-
-        EditText portInput = new EditText(this);
-        portInput.setText(String.valueOf(serverPort));
-        portInput.setSingleLine(true);
-        portInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        layout.addView(portInput);
-
-        builder.setView(layout);
-
-        builder.setPositiveButton("Kaydet", (dialog, which) -> {
-            String newHost = hostInput.getText().toString().trim();
-            String portStr = portInput.getText().toString().trim();
-            if (!newHost.isEmpty() && !portStr.isEmpty()) {
-                serverHost = newHost;
-                try { serverPort = Integer.parseInt(portStr); }
-                catch (NumberFormatException e) { return; }
-                prefs.edit()
-                     .putString("server_host", serverHost)
-                     .putInt("server_port", serverPort).apply();
-                Toast.makeText(this, "Kaydedildi! Yeniden baglaniliyor...", Toast.LENGTH_SHORT).show();
-                disconnectServer();
-                mainHandler.postDelayed(() -> connectToServer(serverHost, serverPort), 500);
-            }
-        });
-        builder.setNegativeButton("Iptal", null);
-        builder.show();
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // KULLANICI ADI
@@ -520,6 +466,7 @@ public class MainActivity extends AppCompatActivity {
         String savedName = prefs.getString("username", "");
         if (!savedName.isEmpty()) {
             username = savedName;
+            refreshContactsUI();
             connectToServer(serverHost, serverPort);
             return;
         }
@@ -539,6 +486,7 @@ public class MainActivity extends AppCompatActivity {
                 username = name;
                 prefs.edit().putString("username", username).apply();
             }
+            refreshContactsUI();
             connectToServer(serverHost, serverPort);
         });
         builder.show();
@@ -549,19 +497,49 @@ public class MainActivity extends AppCompatActivity {
     // ═══════════════════════════════════════════════════════════════════════
 
     private void sendUserMessage() {
-        if (!isConnected || currentChatUser == null) {
-            Toast.makeText(this, "Bagli degil veya kisi secilmedi!", Toast.LENGTH_SHORT).show();
+        if (currentChatUser == null) {
+            Toast.makeText(this, "Kisi secilmedi!", Toast.LENGTH_SHORT).show();
             return;
         }
         String text = etInput.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // Mesaji sifrele ve gonder
-        String encrypted = aesEncrypt(text);
-        sendRaw("TO:" + currentChatUser + ":ENC:" + encrypted);
         addBubbleToChat(text, true);
         saveChatMessage(currentChatUser, text, true);
         etInput.setText("");
+
+        String encrypted = aesEncrypt(text);
+        String rawMsg = "TO:" + currentChatUser + ":ENC:" + encrypted;
+
+        if (isConnected) {
+            sendRaw(rawMsg);
+        } else {
+            // Çevrimdışıysak kuyruğa ekle
+            saveToOfflineQueue(rawMsg);
+            Toast.makeText(this, "Çevrimdışısınız, mesajınız kuyruğa eklendi.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void saveToOfflineQueue(String rawMsg) {
+        try {
+            String qStr = prefs.getString("offline_queue", "[]");
+            JSONArray arr = new JSONArray(qStr);
+            arr.put(rawMsg);
+            prefs.edit().putString("offline_queue", arr.toString()).apply();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    private void flushOfflineQueue() {
+        try {
+            String qStr = prefs.getString("offline_queue", "[]");
+            JSONArray arr = new JSONArray(qStr);
+            if (arr.length() > 0) {
+                for (int i = 0; i < arr.length(); i++) {
+                    sendRaw(arr.getString(i));
+                }
+                prefs.edit().remove("offline_queue").apply();
+            }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private void sendRaw(String message) {
@@ -612,6 +590,8 @@ public class MainActivity extends AppCompatActivity {
                 mainHandler.post(() -> {
                     tvContactsStatus.setText("Baglandi - " + username);
                     tvContactsStatus.setTextColor(Color.parseColor("#A5D6A7"));
+                    // Baglanir baglanmaz kuyruktaki mesajlari gonder
+                    flushOfflineQueue();
                 });
 
                 // Keepalive basla

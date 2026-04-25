@@ -1,7 +1,7 @@
 FROM alpine:latest
 
-# Gerekli araçları yüklüyoruz (C derleyicisi ve Make aracı)
-RUN apk add --no-cache gcc make musl-dev
+# Gerekli araçları yüklüyoruz (C derleyicisi, Make aracı ve OpenSSL)
+RUN apk add --no-cache gcc make musl-dev openssl-dev
 
 # Proje dosyalarını kopyalıyoruz
 WORKDIR /app
