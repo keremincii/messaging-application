@@ -20,6 +20,7 @@ users.txt
 # IDEs and Editors
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 
@@ -34,3 +35,4 @@ build/
 *.ap_
 *.dex
 captures/
+local.properties
