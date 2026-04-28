@@ -36,13 +36,19 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.ImageView;
+import android.widget.RelativeLayout;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -75,6 +81,17 @@ public class MainActivity extends AppCompatActivity {
     private EditText     etInput;
     private Button       btnSend;
     private TextView     btnBack, btnImage, tvChatName, tvChatStatus, tvChatAvatar;
+    private Button       btnUsers;
+
+    // UI - Fullscreen Image
+    private RelativeLayout fullScreenImageLayout;
+    private ImageView      fullScreenImageView;
+    private TextView       btnCloseFullScreen;
+
+    // Chat delete variables
+    private String selectedContactForDelete = null;
+    private LinearLayout deleteActionBar;
+    private Button btnCancelDelete, btnConfirmDelete;
 
     // Soket
     private Socket         socket;
@@ -101,6 +118,7 @@ public class MainActivity extends AppCompatActivity {
     // Kisi listesi ve mesaj gecmisi
     private List<String> onlineUsers = new ArrayList<>();
     private Map<String, List<ChatMessage>> chatHistory = new HashMap<>();
+    private Set<String> allKnownUsers = new HashSet<>();
 
     private SharedPreferences prefs;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -146,8 +164,18 @@ public class MainActivity extends AppCompatActivity {
         tvChatName      = findViewById(R.id.tvChatName);
         tvChatStatus    = findViewById(R.id.tvChatStatus);
         tvChatAvatar    = findViewById(R.id.tvChatAvatar);
+        
+        btnUsers              = findViewById(R.id.btnUsers);
+        fullScreenImageLayout = findViewById(R.id.fullScreenImageLayout);
+        fullScreenImageView   = findViewById(R.id.fullScreenImageView);
+        btnCloseFullScreen    = findViewById(R.id.btnCloseFullScreen);
+        
+        deleteActionBar       = findViewById(R.id.deleteActionBar);
+        btnCancelDelete       = findViewById(R.id.btnCancelDelete);
+        btnConfirmDelete      = findViewById(R.id.btnConfirmDelete);
 
-        // Mesaj gecmisini yukle
+        // Mesaj gecmisini ve bilinen kullanicilari yukle
+        loadKnownUsers();
         loadChatHistoryFromStorage();
 
         // Geri butonu
@@ -161,6 +189,27 @@ public class MainActivity extends AppCompatActivity {
             android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_PICK);
             intent.setType("image/*");
             startActivityForResult(intent, 100);
+        });
+
+        // Fullscreen kapatma ve Users butonu
+        btnCloseFullScreen.setOnClickListener(v -> fullScreenImageLayout.setVisibility(View.GONE));
+        btnUsers.setOnClickListener(v -> showAllUsersDialog());
+
+        // Sohbet Silme Aksiyonlari
+        btnCancelDelete.setOnClickListener(v -> {
+            selectedContactForDelete = null;
+            deleteActionBar.setVisibility(View.GONE);
+            refreshContactsUI();
+        });
+
+        btnConfirmDelete.setOnClickListener(v -> {
+            if (selectedContactForDelete != null) {
+                chatHistory.remove(selectedContactForDelete);
+                saveChatHistoryToStorage();
+                selectedContactForDelete = null;
+                deleteActionBar.setVisibility(View.GONE);
+                refreshContactsUI();
+            }
         });
 
         // Mesaj yazilinca gonder butonu canlansin
@@ -229,7 +278,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (viewFlipper.getDisplayedChild() == 1) {
+        if (fullScreenImageLayout != null && fullScreenImageLayout.getVisibility() == View.VISIBLE) {
+            fullScreenImageLayout.setVisibility(View.GONE);
+        } else if (viewFlipper.getDisplayedChild() == 1) {
             showContactsList();
         } else {
             super.onBackPressed();
@@ -269,6 +320,7 @@ public class MainActivity extends AppCompatActivity {
             Iterator<String> keys = root.keys();
             while (keys.hasNext()) {
                 String contact = keys.next();
+                addKnownUser(contact);
                 JSONArray arr = root.getJSONArray(contact);
                 List<ChatMessage> messages = new ArrayList<>();
                 for (int i = 0; i < arr.length(); i++) {
@@ -285,6 +337,51 @@ public class MainActivity extends AppCompatActivity {
             Log.e(TAG, "Mesaj gecmisi yuklenemedi", e);
         }
     }
+
+    private void loadKnownUsers() {
+        try {
+            String json = prefs.getString("all_known_users", "[]");
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                allKnownUsers.add(arr.getString(i));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void addKnownUser(String name) {
+        if (name == null || name.trim().isEmpty() || name.equals(username)) return;
+        if (allKnownUsers.add(name)) {
+            try {
+                JSONArray arr = new JSONArray(allKnownUsers);
+                prefs.edit().putString("all_known_users", arr.toString()).apply();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void showAllUsersDialog() {
+        List<String> list = new ArrayList<>(allKnownUsers);
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Henüz kimse uygulamayı kullanmamış.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Tüm Kullanıcılar");
+        
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, list);
+        builder.setAdapter(adapter, (dialog, which) -> {
+            String selectedUser = list.get(which);
+            openChat(selectedUser);
+        });
+        builder.setNegativeButton("Kapat", null);
+        builder.show();
+    }
+
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // EKRAN GECISLERI
@@ -349,11 +446,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void addContactItem(String name, boolean isOnline) {
+        boolean isSelectedForDelete = name.equals(selectedContactForDelete);
+
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.HORIZONTAL);
         item.setGravity(Gravity.CENTER_VERTICAL);
         item.setPadding(dpToPx(16), dpToPx(14), dpToPx(16), dpToPx(14));
-        item.setBackgroundColor(Color.WHITE);
+        item.setBackgroundColor(isSelectedForDelete ? Color.parseColor("#E3F2FD") : Color.WHITE);
 
         LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -406,17 +505,39 @@ public class MainActivity extends AppCompatActivity {
 
         item.addView(textCol);
 
-        // Online noktasi
-        TextView dot = new TextView(this);
-        dot.setWidth(dpToPx(12));
-        dot.setHeight(dpToPx(12));
-        GradientDrawable dotBg = new GradientDrawable();
-        dotBg.setShape(GradientDrawable.OVAL);
-        dotBg.setColor(isOnline ? Color.parseColor("#4CAF50") : Color.parseColor("#BDBDBD"));
-        dot.setBackground(dotBg);
-        item.addView(dot);
+        // Online noktasi veya Tick
+        if (isSelectedForDelete) {
+            TextView tick = new TextView(this);
+            tick.setText("✔️");
+            tick.setTextSize(16);
+            tick.setGravity(Gravity.CENTER);
+            item.addView(tick);
+        } else {
+            TextView dot = new TextView(this);
+            dot.setWidth(dpToPx(12));
+            dot.setHeight(dpToPx(12));
+            GradientDrawable dotBg = new GradientDrawable();
+            dotBg.setShape(GradientDrawable.OVAL);
+            dotBg.setColor(isOnline ? Color.parseColor("#4CAF50") : Color.parseColor("#BDBDBD"));
+            dot.setBackground(dotBg);
+            item.addView(dot);
+        }
 
-        item.setOnClickListener(v -> openChat(name));
+        item.setOnLongClickListener(v -> {
+            selectedContactForDelete = name;
+            deleteActionBar.setVisibility(View.VISIBLE);
+            refreshContactsUI();
+            return true;
+        });
+
+        item.setOnClickListener(v -> {
+            if (selectedContactForDelete != null) {
+                selectedContactForDelete = name;
+                refreshContactsUI();
+            } else {
+                openChat(name);
+            }
+        });
         item.setClickable(true);
         item.setFocusable(true);
 
@@ -694,9 +815,11 @@ public class MainActivity extends AppCompatActivity {
                 for (String u : users) {
                     String trimmed = u.trim();
                     // Kendi adimizi ve boslari filtrele
-                    if (!trimmed.isEmpty() && !trimmed.equals(username)
-                            && !onlineUsers.contains(trimmed)) {
-                        onlineUsers.add(trimmed);
+                    if (!trimmed.isEmpty() && !trimmed.equals(username)) {
+                        addKnownUser(trimmed);
+                        if (!onlineUsers.contains(trimmed)) {
+                            onlineUsers.add(trimmed);
+                        }
                     }
                 }
             }
@@ -705,8 +828,11 @@ public class MainActivity extends AppCompatActivity {
         } else if (msg.startsWith("ONLINE:")) {
             String user = msg.substring(7).trim();
             // Kendi adimizi ekleme, tekrardan kacin
-            if (!user.equals(username) && !onlineUsers.contains(user)) {
-                onlineUsers.add(user);
+            if (!user.equals(username)) {
+                addKnownUser(user);
+                if (!onlineUsers.contains(user)) {
+                    onlineUsers.add(user);
+                }
             }
             refreshContactsUI();
             if (user.equals(currentChatUser)) {
@@ -747,6 +873,7 @@ public class MainActivity extends AppCompatActivity {
                     refreshContactsUI();
                 }
 
+                addKnownUser(sender);
                 if (!onlineUsers.contains(sender)) {
                     onlineUsers.add(sender);
                     refreshContactsUI();
@@ -809,6 +936,13 @@ public class MainActivity extends AppCompatActivity {
                 iv.setBackground(bg);
                 iv.setPadding(dpToPx(4), dpToPx(4), dpToPx(4), dpToPx(4));
                 iv.setLayoutParams(params);
+                
+                // Resme tiklayinca tam ekran yap
+                iv.setOnClickListener(v -> {
+                    fullScreenImageView.setImageBitmap(bmp);
+                    fullScreenImageLayout.setVisibility(View.VISIBLE);
+                });
+
                 chatContainer.addView(iv);
                 chatScrollView.post(() -> chatScrollView.fullScroll(ScrollView.FOCUS_DOWN));
             } catch (Exception e) { e.printStackTrace(); }

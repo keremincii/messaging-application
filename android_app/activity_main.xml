@@ -59,13 +59,27 @@
                         android:textSize="12sp" />
                 </LinearLayout>
 
+                <!-- Users Button -->
+                <Button
+                    android:id="@+id/btnUsers"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="KİŞİLER"
+                    android:textSize="12sp"
+                    android:textColor="#1A73E8"
+                    android:backgroundTint="#FFFFFF"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:layout_marginStart="8dp" />
+
             </LinearLayout>
 
             <!-- Kişi Listesi -->
             <ScrollView
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_below="@id/contactsHeader">
+                android:layout_below="@id/contactsHeader"
+                android:layout_above="@+id/deleteActionBar">
 
                 <LinearLayout
                     android:id="@+id/contactsList"
@@ -74,6 +88,38 @@
                     android:orientation="vertical"
                     android:paddingTop="4dp" />
             </ScrollView>
+
+            <!-- Bottom Action Bar (Sohbeti Sil / Vazgeç) -->
+            <LinearLayout
+                android:id="@+id/deleteActionBar"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_alignParentBottom="true"
+                android:background="#FFFFFF"
+                android:orientation="horizontal"
+                android:visibility="gone"
+                android:elevation="8dp">
+
+                <Button
+                    android:id="@+id/btnCancelDelete"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:text="Vazgeç"
+                    android:textColor="#757575"
+                    android:backgroundTint="#EEEEEE"
+                    android:layout_margin="8dp" />
+
+                <Button
+                    android:id="@+id/btnConfirmDelete"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:text="Sohbeti Sil"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#E53935"
+                    android:layout_margin="8dp" />
+            </LinearLayout>
         </RelativeLayout>
 
         <!-- ============ EKRAN 1: SOHBET ============ -->
@@ -213,4 +259,35 @@
         </RelativeLayout>
 
     </ViewFlipper>
+
+    <!-- Fullscreen Image Viewer -->
+    <RelativeLayout
+        android:id="@+id/fullScreenImageLayout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone"
+        android:elevation="10dp"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/fullScreenImageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter" />
+
+        <TextView
+            android:id="@+id/btnCloseFullScreen"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:text="✖"
+            android:textSize="24sp"
+            android:textColor="#FFFFFF"
+            android:gravity="center"
+            android:layout_alignParentTop="true"
+            android:layout_alignParentEnd="true"
+            android:layout_margin="16dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless" />
+    </RelativeLayout>
 </FrameLayout>

@@ -1,45 +1,61 @@
-# C Socket Tabanlı Merkezi Mesajlaşma Uygulaması
+# Secure Messaging Application (C Server & Android Client)
 
-Bu proje, Bil314 Bilgisayar Ağları dersi kapsamında geliştirilmiş, "Client-Server" (İstemci-Sunucu) mimarisine dayalı eşzamanlı bir mesajlaşma uygulamasıdır.
+Bu proje, **Bil314 Bilgisayar Ağları** dersi final projesi kapsamında geliştirilmiş, uçtan uca şifreli ve merkezi sunucu tabanlı bir mesajlaşma ekosistemidir. 
 
-## Proje Bileşenleri
+## 🚀 Temel Özellikler
+- **Çok İş Parçacıklı Sunucu (C):** POSIX Threads (pthreads) ile yüksek eşzamanlılık.
+- **Uçtan Uca Şifreleme:** Mesajlar istemci tarafında AES-128-CBC ile şifrelenir.
+- **Modern Android UI:** Java/Android SDK ile geliştirilmiş şık ve kullanıcı dostu arayüz.
+- **Resim Paylaşımı:** Fotoğrafları Base64 formatında şifreli olarak iletebilme.
+- **Çevrimdışı Mesaj Kuyruğu:** İnternet yokken mesajları kaydedip, bağlantı gelince otomatik gönderme.
+- **Docker Desteği:** Sunucuyu tek komutla her ortamda ayağa kaldırabilme.
 
-Proje 3 temel bileşenden oluşmaktadır:
-1. **Server (Sunucu - C Dili):** Sistemin ana omurgasıdır. TCP/IP soketleri üzerinden istemcilerle haberleşir. Çoklu kullanıcı desteği için Pthreads (POSIX Threads) kullanılmıştır.
-2. **Client (CLI İstemci - C Dili):** Konsol üzerinden mesajlaşmayı sağlayan temel istemcidir.
-3. **Android Client (Mobil İstemci - Java):** Kullanıcı deneyimini artırmak amacıyla ek olarak geliştirilmiş, cihaz kimliği (token) tabanlı yetkilendirme (Passwordless Auth) kullanan modern mobil istemcidir.
+---
 
-## Kurulum ve Çalıştırma
+## 🛠️ Mimari Yapı
+Proje 2 ana bileşenden oluşur:
 
-### 1. Sunucunun Çalıştırılması (Linux / WSL / macOS)
-Sunucu C dili ile geliştirilmiş olup `make` aracı ile kolayca derlenebilir.
+### 1. Backend (C Server)
+- **Sockets:** TCP/IP protokolü ile güvenilir veri iletimi.
+- **Pthreads:** Her kullanıcı için ayrı bir thread yönetimi.
+- **Docker:** Sunucu `docker-compose.yml` ile konteynerize edilmiştir.
+- **Gereksinimler:** `OpenSSL`, `gcc`, `make`.
 
+### 2. Frontend (Android App)
+- **Socket Client:** Sunucuyla sürekli bağlantıda kalan asenkron yapı.
+- **Encryption:** `javax.crypto` ile güvenli veri iletişimi.
+- **Persistence:** SharedPreferences ile sohbet geçmişi ve çevrimdışı kuyruk yönetimi.
+
+---
+
+## ⚙️ Kurulum ve Çalıştırma
+
+### Sunucuyu Başlatma (Docker ile)
+Sunucuyu VPS veya yerel makinenizde başlatmak için Docker yüklü olması yeterlidir:
 ```bash
-cd server
-make
-./chat_server
+# Proje ana dizininde
+docker compose up -d --build
 ```
-*Sunucu varsayılan olarak 8080 portunda dinlemeye başlar.*
+*Sunucu varsayılan olarak **8080** portunu kullanır.*
 
-### 2. C CLI İstemcisinin Çalıştırılması
-Terminal üzerinden sunucuya bağlanmak için:
-```bash
-cd client
-gcc main.c -o client -lpthread
-./client
-```
+### Android Uygulamasını Kurma
+1. `android_app` klasörünü Android Studio ile açın.
+2. `MainActivity.java` içindeki `DEFAULT_HOST` değişkenini sunucu IP adresinizle güncelleyin.
+3. Projeyi derleyip telefonunuza yükleyin.
 
-### 3. Android İstemcisinin Çalıştırılması
-- `android_app` klasörünü Android Studio ile açın.
-- Telefonunuzu veya emülatörü bağlayıp projeyi derleyerek (Run) çalıştırın.
-- Uygulama ilk açıldığında sunucu IP adresini ve Port numarasını "Ayarlar" butonundan güncelleyebilirsiniz.
+---
 
-## Güvenlik ve Yetkilendirme
-Projede **Şifresiz Token Yetkilendirmesi (Passwordless Device-Token Auth)** kullanılmıştır. 
-- İstemci sunucuya bağlandığında arka planda eşsiz bir UUID gönderir (`AUTH:KullaniciAdi:Token`).
-- Sunucu bunu `users.txt` dosyasına kaydeder (`auth.c`). 
-- Aynı kullanıcı adıyla başka bir cihazdan girilmeye çalışıldığında token eşleşmeyeceği için sunucu bağlantıyı reddeder.
+## 📂 Proje Dokümantasyonu
+Hoca için hazırlanan detaylı dokümanlara `Dokumanlar/` klasöründen ulaşabilirsiniz:
+- [Proje Tanımlama Dokümanı](Dokumanlar/Proje_Tanimlama_Dokumani.md)
+- [Teknik Dokümantasyon](Dokumanlar/Proje_Dokumantasyonu.md)
+- [Proje Sunumu (Slayt Taslağı)](Dokumanlar/Proje_Sunumu.md)
 
-## Github Reposu
-Projenin en güncel kaynak kodlarına aşağıdaki bağlantıdan ulaşabilirsiniz:
-**[Github Repo Linki Buraya Eklenecek]**
+---
+
+## 👥 Ekip
+- **Mehmet Kerem İnci** (230206057)
+- **Erenalp Tunay**
+
+---
+**Github Repo:** [https://github.com/keremincii/messaging-application](https://github.com/keremincii/messaging-application)
